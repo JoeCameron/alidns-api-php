@@ -1,0 +1,104 @@
+#aliyun Access Key
+:local id ""
+:local secret ""
+
+# 域名和记录
+:local domain ""
+:local record ""
+:local record6 ""
+
+# PPPoE 接口
+:local pppoe "pppoe-out1"
+
+# 获取 IPv4 地址
+:local ipaddr [/ip address get [/ip address find interface=$pppoe] address]
+:set ipaddr [:pick $ipaddr 0 ([len $ipaddr] -3)]
+:log info ("IPv4 address: " . $ipaddr)
+
+# 获取 IPv6 地址（从 bridge 接口获取）
+:local ip6addr
+:do {
+    :local interfaceIP
+    :local interfaceIPList [/ipv6 address find interface=bridge global]
+    :local interfaceIPListSize [:len $interfaceIPList]
+    :log info ("Number of global IPv6 addresses on bridge: " . $interfaceIPListSize)
+
+    # 如果接口上只有一个 IP，那么直接使用这个 IP
+    :if ($interfaceIPListSize = 1) do={
+        :set interfaceIP [/ipv6 address get $interfaceIPList address]
+        :log info ("Single IPv6 address found: " . $interfaceIP)
+    }
+
+    # 如果接口上有多个 IP，那么找到非内网地址的 IP
+    :if ($interfaceIPListSize > 1) do={
+        :log info "Multiple IPv6 addresses found. Filtering out link-local addresses..."
+        :foreach id in $interfaceIPList do={
+            :local eachAddress [/ipv6 address get $id address]
+            :local isLinkLocal false
+            :log info ("Checking address: " . $eachAddress)
+
+            :if ($eachAddress in fc00::/7) do={
+                :set isLinkLocal true
+                :log info ("Address is in fc00::/7 (link-local): " . $eachAddress)
+            }
+            :if ($eachAddress in fd00::/8) do={
+                :set isLinkLocal true
+                :log info ("Address is in fd00::/8 (link-local): " . $eachAddress)
+            }
+            :if ($eachAddress in fe80::/10) do={
+                :set isLinkLocal true
+                :log info ("Address is in fe80::/10 (link-local): " . $eachAddress)
+            }
+
+            :if (!$isLinkLocal) do={
+                :set interfaceIP $eachAddress
+                :log info ("Selected public IPv6 address: " . $interfaceIP)
+            }
+        }
+    }
+
+    :local interfaceIPLength [:len $interfaceIP]
+    :if ($interfaceIPLength = 0) do={
+        :log warning "DDNSv6: No public IPv6 address found on bridge interface"
+    } else={
+        # 去掉 "/" 及后面的部分
+        :set ip6addr [:pick $interfaceIP 0 [:find $interfaceIP "/"]]
+        :log info ("Final IPv6 address (without prefix): " . $ip6addr)
+    }
+} on-error={
+    :log error "DDNSv6: Failed to get IPv6 address from bridge interface"
+}
+
+# 全局变量存储上一次的 IP 地址
+:global aliip
+:global aliip6
+
+# 更新 IPv4 DNS 记录
+:if ($ipaddr != $aliip) do={
+    :local result [/tool fetch url="http://172.16.0.20/alidns.php?id=$id&secret=$secret&domain=$domain&record=$record&ip=$ipaddr" as-value output=user]
+    :if ($result->"status" = "finished") do={
+        :if ($result->"data" = "0") do={
+            :set aliip $ipaddr
+            :log info "alidns IPv4 update ok"
+        } else={
+            :log warning ("alidns IPv4 update error: " . $result->"data")
+        }
+    }
+}
+
+# 更新 IPv6 DNS 记录
+:if ([:len $ip6addr] > 0 && $ip6addr != $aliip6) do={
+    :local url ("http://172.16.0.20/alidns.php?id=$id&secret=$secret&domain=$domain&record=$record6&type=AAAA&ip=$ip6addr")
+    :log info ("DDNSv6: Sending request to URL: " . $url)
+    :local result6 [/tool fetch url=$url as-value output=user]
+    :if ($result6->"status" = "finished") do={
+        :if ($result6->"data" = "0") do={
+            :set aliip6 $ip6addr
+            :log info "alidns IPv6 update ok"
+        } else={
+            :log warning ("alidns IPv6 update error: " . $result6->"data")
+        }
+    } else={
+        :log warning ("alidns IPv6 update failed: HTTP request failed")
+    }
+}
