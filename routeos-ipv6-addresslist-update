@@ -1,0 +1,31 @@
+#!rsc by RouterOS
+#
+# Used to update prefixes in IPv6 firewall's address-list to 
+# keep them in sync with the prefix assigned by the ISP via DHCP-v6.
+# This is an workaround since stubborn ROS still doesn't provide 
+# reverse masks feature in 2024.
+#
+# Args:
+#   nic: the name of pppoe interface
+#   keyword: RegExp used to match ipv6 firewall address-list item comment
+
+:local nic "pppoe-out1"
+:local keyword "\\[dp\\]"
+
+:local ipv6 [/ipv6 dhcp-client get pppoe-out1 prefix]
+:set ipv6 [:pick $ipv6 0 [:find $ipv6 "/"]]
+
+:if ([:typeof $ipv6]="nothing") do={
+    :log info "v6firewall: no IPv6 prefix on $nic, ignore..."
+} else={
+    :foreach i in=[/ipv6/firewall/address-list find where comment~$keyword] do={
+        :local addr [/ipv6/firewall/address-list get $i address]
+        :set addr [:pick $addr 0 [:find $addr "/"]]
+        
+        :local newAddr ([:toip6 $ipv6]|([:toip6 $addr]&::ffff:ffff:ffff:ffff))
+        :if ($newAddr!=$addr) do={
+            /ipv6/firewall/address-list set $i address=$newAddr
+            :log info "v6firewall: update $addr -> $newAddr"
+        }
+    }
+}
