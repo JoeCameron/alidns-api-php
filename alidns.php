@@ -10,7 +10,6 @@ if($_SERVER['REQUEST_METHOD']=="GET"){
   $request = $_GET;
 }
 if(is_array($request)&&count($request)<1){
-  Header("Location: //www.77bx.com/aliyun-ddns-api.html");
   exit('2');
 }
 
