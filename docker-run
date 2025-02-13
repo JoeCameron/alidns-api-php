@@ -1,0 +1,1 @@
+docker run -d --name my-alidns --network macvlan-net --ip 172.16.0.20 -p 80:80 --restart unless-stopped alidns
